@@ -1,130 +1,3 @@
-// server.js
-// Node 18+
-// Real-time poll service with WebSocket (Socket.IO) and in-memory storage
-
-import express from "express";
-import http from "http";
-import { Server } from "socket.io";
-import path from "path";
-import { fileURLToPath } from "url";
-import os from "os";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
-
-app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
-
-// Simple in-memory store
-/** @type {Map<string, any>} */
-const polls = new Map(); // id -> poll
-/** @type {Map<string, string>} */
-const codeToPoll = new Map(); // code -> pollId
-
-// Helpers
-const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
-const randCode = () => "V-" + Math.random().toString(36).substring(2, 8).toUpperCase();
-
-function ensureCodeUnique(code){
-  let c = (code || randCode()).toUpperCase();
-  while(codeToPoll.has(c)) c = randCode();
-  return c;
-}
-
-function broadcastPoll(pollId){
-  const poll = polls.get(pollId);
-  if(!poll) return;
-  io.to("poll:"+pollId).emit("poll_updated", poll);
-}
-
-function cleanAllocations(alloc){
-  const result = {};
-  if(!alloc || typeof alloc !== "object") return result;
-  for(const [k,v] of Object.entries(alloc)){
-    const n = Number(v) || 0;
-    if(n > 0) result[k] = Math.floor(n);
-  }
-  return result;
-}
-
-// REST endpoint for export (optional)
-app.get("/api/poll/:id", (req,res) => {
-  const poll = polls.get(req.params.id);
-  if(!poll) return res.status(404).json({error:"not found"});
-  res.json(poll);
-});
-
-// helper to get local network addresses (for user convenience)
-app.get("/api/host", (_req,res)=>{
-  const ifaces = os.networkInterfaces();
-  const addrs = [];
-  for(const [name, arr] of Object.entries(ifaces)){
-    for(const info of arr || []){
-      if(info.family === "IPv4" && !info.internal){
-        addrs.append;
-        addrs.push({ iface: name, address: info.address });
-      }
-    }
-  }
-  res.json({ addresses: addrs });
-});
-
-io.on("connection", (socket) => {
-  // Create new poll
-  socket.on("create_poll", (ack) => {
-    const poll = {
-      id: uid(),
-      title: "",
-      status: "draft", // 'open' | 'closed'
-      options: [], // {id, label}
-      voters: [], // {name, coins, code, submitted}
-      votes: {} // code -> { optionId: coins }
-    };
-    polls.set(poll.id, poll);
-    socket.join("poll:"+poll.id);
-    if(typeof ack === "function") ack(poll);
-  });
-
-  // Join existing poll room and get data
-  socket.on("join_poll", ({ id }, ack) => {
-    const poll = polls.get(id);
-    if(!poll){ if(typeof ack==="function") ack(null); return; }
-    socket.join("poll:"+id);
-    if(typeof ack==="function") ack(poll);
-  });
-
-  // Get poll by id
-  socket.on("get_poll", ({ id }, ack)=>{
-    const poll = polls.get(id) || null;
-    if(typeof ack==="function") ack(poll);
-  });
-
-  // Find poll by access code
-  socket.on("get_poll_by_code", ({ code }, ack) => {
-    const pid = codeToPoll.get((code||"").toUpperCase());
-    const poll = pid ? polls.get(pid) : null;
-    if(typeof ack === "function") ack(poll || null);
-  });
-
-  // Mutations (organizer)
-  socket.on("set_title", ({ id, title }) => {
-    const p = polls.get(id); if(!p) return;
-    p.title = title || "";
-    broadcastPoll(id);
-  });
-
-  socket.on("set_status", ({ id, status }) => {
-    const p = polls.get(id); if(!p) return;
-    if(status==="open" || status==="closed" || status==="draft"){
-      p.status = status;
-      broadcastPoll(id);
-    }
-  });
-
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -149,7 +22,7 @@ const ensureCodeUnique = (code) => {
   return c;
 };
 
-// Очистка аллокаций голосов (убираем лишние ключи/негативные значения)
+// Очистка аллокаций голосов
 const cleanAllocations = (alloc) => {
   const res = {};
   if (!alloc) return res;
@@ -276,3 +149,4 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, "0.0.0.0", () => {
   console.log("Server listening on port " + PORT);
 });
+
